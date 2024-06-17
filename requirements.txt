@@ -3,6 +3,7 @@ tiktoken
 pinecone-client
 pypdf
 langchain
+langchain-community
 pandas
 numpy
 python-dotenv
