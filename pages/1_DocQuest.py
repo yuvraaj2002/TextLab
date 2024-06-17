@@ -7,6 +7,10 @@ import pandas as pd
 from sentence_transformers import SentenceTransformer
 from pinecone.grpc import PineconeGRPC as Pinecone
 from pinecone import ServerlessSpec
+import os
+
+from dotenv import load_dotenv
+load_dotenv()
 
 # Load embedding model and cache it
 @st.cache_resource
@@ -24,13 +28,24 @@ def Doc_QA():
     pdf_file = st.file_uploader("Upload the query document", type="pdf")
     emb_model = load_embedding_model()
 
+    # Initialize Pinecone client
+    pc = Pinecone(api_key=os.environ['PINECONE_API'])
+    index_name = "docquest"
+
     if pdf_file is not None:
+        # Check if index exists, delete if it does
+        if index_name in pc.list_indexes().names():
+            pc.delete_index(index_name)
+
+        # Save the uploaded PDF file
         with open("uploaded_pdf.pdf", "wb") as f:
             f.write(pdf_file.read())
 
+        # Use PyPDFLoader to load and split the PDF
         loader = PyPDFLoader("uploaded_pdf.pdf")
         docs = loader.load_and_split()
 
+        # Calling the function to create chunks
         chunks = chunk_data(docs=docs)
 
         data = []
@@ -40,27 +55,19 @@ def Doc_QA():
             embedding = emb_model.encode(actual_text).tolist()
             data.append((f"{i}", embedding, metadata))
 
-        # Initialize Pinecone client
-        # pc = Pinecone(api_key="c7bcca3b-f55e-4c48-b6fd-ed090e75997f")
-        index_name = "docquest"
-
-        # Check if index exists, create if it doesn't
-        if index_name not in pc.list_indexes().names():
-            pc.create_index(
-                name=index_name,
-                dimension=384,
-                metric="cosine",
-                spec=ServerlessSpec(
-                    cloud='aws',
-                    region='us-east-1'
-                )
+        # Create a new index
+        pc.create_index(
+            name=index_name,
+            dimension=384,
+            metric="cosine",
+            spec=ServerlessSpec(
+                cloud='aws',
+                region='us-east-1'
             )
+        )
 
         # Get the index reference
         index = pc.Index(index_name)
-
-        # Delete existing data in the index
-        index.delete(delete_all=True)
 
         # Upsert data in batches
         batch_size = 50
