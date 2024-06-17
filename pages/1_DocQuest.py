@@ -6,7 +6,10 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.embeddings.openai import OpenAIEmbeddings
 from langchain.vectorstores import Pinecone
 from langchain.llms import OpenAI
+import pandas as pd
 from sentence_transformers import SentenceTransformer
+from pinecone.grpc import PineconeGRPC as Pinecone
+from pinecone import ServerlessSpec
 
 
 # Load embedding model and cache it
@@ -15,6 +18,23 @@ def load_embedding_model():
     emb_model = SentenceTransformer("all-MiniLM-L6-v2")
     return emb_model
 
+
+def setup_pinecone():
+    # Setting up pinecone
+    pc = Pinecone(api_key="c7bcca3b-f55e-4c48-b6fd-ed090e75997f")
+    index_name = "docquest"
+    if index_name not in pc.list_indexes().names():
+        pc.create_index(
+            name=index_name,
+            dimension=384,
+            metric="cosine",
+            spec=ServerlessSpec(
+                cloud='aws',
+                region='us-east-1'
+            )
+        )
+    index = pc.Index(index_name)
+    return index
 
 
 def chunk_data(docs, chunk_size=800, chunk_overlap=50):
@@ -40,13 +60,6 @@ def Doc_QA():
     pdf_file = st.file_uploader("Upload the query document", type="pdf")
     emb_model = load_embedding_model()
 
-    text = st.text_input("Input something")
-    if text:
-        embeddings = emb_model.encode([text])
-        st.write(f"Embedding shape for '{text}': {embeddings.shape}")
-    else:
-        st.error("Enter some text")
-
 
     if pdf_file is not None:
 
@@ -56,16 +69,36 @@ def Doc_QA():
 
         # Use PyPDFLoader to load and split the PDF
         loader = PyPDFLoader("uploaded_pdf.pdf")
-        pages = loader.load_and_split()
+        docs = loader.load_and_split()
 
         # Calling the function to create chunks
-        chunks = chunk_data(docs=pages)
-        raw_text = chunks[3].page_content
+        chunks = chunk_data(docs=docs)
 
-        embeddings = emb_model.encode([raw_text])
-        st.write(f"Embedding shape for '{raw_text}': {embeddings[0]}")
+        # Prepare data for upserting in Pinecone
+        data = []
+        for i, chunk in enumerate(chunks):
+            actual_text = chunk.page_content
+            metadata = {'text': f'{actual_text}'}
+            embedding = emb_model.encode(actual_text)
+            data.append({"id": f"{i}", "values": embedding, "metadata": metadata})
 
+        # Creating pandas dataframe
+        data_df = pd.DataFrame(data)
 
+        # Calling the function to setup the pinecone object
+        index = setup_pinecone()
+
+        # Upsert data into Pinecone index in batches
+        batch_size = 50
+        total_batches = (len(data_df) + batch_size - 1) // batch_size
+        for i in (range(total_batches)):
+            start_idx = i * batch_size
+            end_idx = min((i + 1) * batch_size, len(data_df))
+            batch = data_df.iloc[start_idx:end_idx]
+            items = [(row["id"], row["values"], row["metadata"]) for _, row in batch.iterrows()]
+            index.upsert(items=items)
+
+        st.success("Document has been processed and upserted to the index!")
 
 
 
