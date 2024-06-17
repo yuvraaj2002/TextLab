@@ -9,6 +9,7 @@ from langchain.llms import OpenAI
 from sentence_transformers import SentenceTransformer
 
 
+# Load embedding model and cache it
 @st.cache_resource
 def load_embedding_model():
     emb_model = SentenceTransformer("all-MiniLM-L6-v2")
@@ -37,6 +38,15 @@ def chunk_data(docs, chunk_size=800, chunk_overlap=50):
 def Doc_QA():
     st.title("Doc Quest")
     pdf_file = st.file_uploader("Upload the query document", type="pdf")
+    emb_model = load_embedding_model()
+
+    text = st.text_input("Input something")
+    if text:
+        embeddings = emb_model.encode([text])
+        st.write(f"Embedding shape for '{text}': {embeddings.shape}")
+    else:
+        st.error("Enter some text")
+
 
     if pdf_file is not None:
 
@@ -48,11 +58,16 @@ def Doc_QA():
         loader = PyPDFLoader("uploaded_pdf.pdf")
         pages = loader.load_and_split()
 
-        st.write(len(pages))
-
         # Calling the function to create chunks
         chunks = chunk_data(docs=pages)
-        st.write(len(chunks))
+        raw_text = chunks[3].page_content
+
+        embeddings = emb_model.encode([raw_text])
+        st.write(f"Embedding shape for '{raw_text}': {embeddings[0]}")
+
+
+
+
 
 
 Doc_QA()
