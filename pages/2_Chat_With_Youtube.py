@@ -2,6 +2,7 @@ import streamlit as st
 import tempfile
 import whisper
 from pytube import YouTube
+from moviepy.editor import VideoFileClip
 from langchain_community.llms import Ollama
 from langchain_community.embeddings import OllamaEmbeddings
 import os
@@ -43,18 +44,40 @@ def load_models():
 
 
 def get_video_transcript(whisper_model, youtube_url):
-
     transcription = ""
-    youtube = YouTube(youtube_url)
-    audio = youtube.streams.filter(only_audio=True).first()
+    try:
+        # Initialize pytube to fetch YouTube video
+        yt = YouTube(youtube_url)
+        
+        # Get the highest quality audio stream
+        audio_stream = yt.streams.filter(only_audio=True).first()
+        
+        # Download audio stream to a temporary file
+        temp_file = audio_stream.download(filename="extracted_audio")
+        
+        # Convert to mp3 using moviepy
+        video_clip = VideoFileClip(temp_file)
+        audio_clip = video_clip.audio
+        audio_clip.write_audiofile("./audio.mp3")
+        
+        # Close and delete the temporary file
+        audio_clip.close()
+        video_clip.close()
+        os.remove(temp_file)
+        
+        print("Audio saved as audio.mp3")
+        
+    except Exception as e:
+        print(f"Error: {str(e)}")
 
-    with tempfile.TemporaryDirectory() as tmpdir:
-        file = audio.download(output_path=tmpdir)
-        transcription = whisper_model.transcribe(file, fp16=False)["text"].strip()
-
-        # Always write the transcription to the file, overwriting if it exists
-        with open("./video_content.txt", "w") as file:
-            file.write(transcription)
+    if os.path.exists("./extracted_audio"):
+        st.audio("./extracted_audio", format="audio/mpeg", loop=True)
+        os.remove("./extracted_audio")
+        # result = whisper_model.transcribe("./extracted_audio")['text']
+        # transcription = transcription + result 
+        pass
+    else:
+        st.error("Audio can't be transcripted")
 
     return transcription
 
@@ -68,7 +91,7 @@ def chat_with_utube():
 
     # Calling the function to load the Whisper model, LLM and embedding model
     whisper,llm,embedding_model = load_models()
-    
+
 
     col1,col2 = st.columns(spec=(1.3,1), gap="large")
     chat_bt = False
@@ -97,7 +120,7 @@ def chat_with_utube():
             transcrip_bt = st.button("Get transcript",use_container_width=True)
             if transcrip_bt:
                 transcription = get_video_transcript(whisper,youtube_link)
-                with chat_col:
+                with col1:
                     st.success("Video transcription extracted succesfully")
                     st.write(transcription)
 
